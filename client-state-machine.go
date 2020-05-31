@@ -87,7 +87,7 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	}
 
 	logf(logTypeHandshake, "opts: %+v", state.Opts)
-
+	
 	// supported_versions, supported_groups, signature_algorithms, server_name
 	sv := SupportedVersionsExtension{HandshakeType: HandshakeTypeClientHello, Versions: []uint16{tls13Version}}
 	sni := ServerNameExtension(state.Opts.ServerName)
@@ -152,6 +152,17 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 			logf(logTypeHandshake, "[ClientStateStart] Error running external extension sender [%v]", err)
 			return nil, nil, AlertInternalError
 		}
+	}
+
+	
+	// Handle BSK
+	if (len(state.Config.ClientBSK.pub) != 0) {
+		// Add the BSK extension to the ClientHello
+		logf(logTypeHandshake, "[ClientStateStart] Adding BSK extension %x", state.Config.ClientBSK.hPub)
+		bskExt := &BootstrapKeyExtensionCH{
+			Bsk:         state.Config.ClientBSK.hPub,
+		}
+		ch.Extensions.Add(bskExt)
 	}
 
 	// Handle PSK and EarlyData just before transmitting, so that we can
@@ -443,11 +454,13 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 	// Do PSK or key agreement depending on extensions
 	serverPSK := PreSharedKeyExtension{HandshakeType: HandshakeTypeServerHello}
 	serverKeyShare := KeyShareExtension{HandshakeType: HandshakeTypeServerHello}
+	serverBSK := BootstrapKeyExtensionSH{}
 
 	foundExts, err := sh.Extensions.Parse(
 		[]ExtensionBody{
 			&serverPSK,
 			&serverKeyShare,
+			&serverBSK,
 		})
 	if err != nil {
 		logf(logTypeHandshake, "[ClientWaitSH] Error processing extensions [%v]", err)
@@ -469,6 +482,19 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 
 		state.Params.UsingDH = true
 		dhSecret, _ = keyAgreement(sks.Group, sks.KeyExchange, priv)
+	}
+
+	var dhSecretBSK []byte
+
+	if (len(state.Config.ClientBSK.pub) != 0) {
+		if foundExts[ExtensionTypeBootstrapKey] {
+			logf(logTypeHandshake, "[ClientStateWaitSH] Found server BSK extension")
+		
+			dhSecretBSK, _ = keyAgreement(state.Config.ClientBSK.group, serverBSK.KeyExchange, state.Config.ClientBSK.priv)
+			state.Params.UsingBSK = true		
+		} else {
+			logf(logTypeHandshake, "[ClientStateWaitSH] Server did not offer BSK extension")
+		}
 	}
 
 	suite := sh.CipherSuite
@@ -508,8 +534,17 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 
 	h0 := params.Hash.New().Sum(nil)
 	h2 := handshakeHash.Sum(nil)
+	var handshakeSecret []byte
 	preHandshakeSecret := deriveSecret(params, earlySecret, labelDerived, h0)
-	handshakeSecret := HkdfExtract(params.Hash, preHandshakeSecret, dhSecret)
+	if (state.Params.UsingBSK) {
+		bskInput := HkdfExtract(params.Hash, preHandshakeSecret, dhSecretBSK)
+		bskSecret := deriveSecret(params, bskInput, "derived", h0)
+		logf(logTypeCrypto, "bskInput [%d] %x", len(bskInput), bskInput)
+		logf(logTypeCrypto, "bskSecret [%d] %x", len(bskSecret), bskSecret)
+		handshakeSecret = HkdfExtract(params.Hash, bskSecret, dhSecret)
+	} else {
+		handshakeSecret = HkdfExtract(params.Hash, preHandshakeSecret, dhSecret)
+	}
 	clientHandshakeTrafficSecret := deriveSecret(params, handshakeSecret, labelClientHandshakeTrafficSecret, h2)
 	serverHandshakeTrafficSecret := deriveSecret(params, handshakeSecret, labelServerHandshakeTrafficSecret, h2)
 	preMasterSecret := deriveSecret(params, handshakeSecret, labelDerived, h0)

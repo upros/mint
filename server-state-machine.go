@@ -118,6 +118,7 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	signatureAlgorithms := new(SignatureAlgorithmsExtension)
 	clientKeyShares := &KeyShareExtension{HandshakeType: HandshakeTypeClientHello}
 	clientPSK := &PreSharedKeyExtension{HandshakeType: HandshakeTypeClientHello}
+	clientBSK := new(BootstrapKeyExtensionCH)
 	clientEarlyData := &EarlyDataExtension{}
 	clientALPN := new(ALPNExtension)
 	clientPSKModes := new(PSKKeyExchangeModesExtension)
@@ -141,6 +142,7 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 			clientEarlyData,
 			clientKeyShares,
 			clientPSK,
+			clientBSK,
 			clientALPN,
 			clientPSKModes,
 			clientCookie,
@@ -204,6 +206,25 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	if len(ch.LegacySessionID) != 0 && len(ch.LegacySessionID) != 32 {
 		logf(logTypeHandshake, "[ServerStateStart] invalid session ID")
 		return nil, nil, AlertIllegalParameter
+	}
+
+	// Did client offer BSK
+	var dhGroupBSK NamedGroup
+	var dhPublicBSK, dhSecretBSK []byte
+	ks:= make([]KeyShareEntry, 1)
+	if foundExts[ExtensionTypeBootstrapKey]{
+		logf(logTypeHandshake, "[ServerStateStart] Client offered BSK")
+		if bsk, ok := state.Config.ServerBSKs.Get(clientBSK.Bsk); ok {
+			logf(logTypeHandshake, "[ServerStateStart] Found matching BSK %x", clientBSK.Bsk)
+			ks[0] = KeyShareEntry {
+				Group:     bsk.group,
+				KeyExchange: bsk.pub,
+			}
+		}
+		connParams.UsingBSK, dhGroupBSK, dhPublicBSK, dhSecretBSK = DHNegotiation(ks, state.Config.Groups)
+		if (connParams.UsingBSK) {
+			logf(logTypeNegotiation, "Using BSK with identity %x", clientBSK.Bsk)
+		}
 	}
 
 	// Figure out if we can do DH
@@ -357,6 +378,9 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	if !connParams.UsingDH {
 		dhSecret = nil
 	}
+	if !connParams.UsingBSK {
+		dhSecretBSK = nil
+	}
 
 	// Figure out if we're going to do early data
 	var clientEarlyTrafficSecret []byte
@@ -390,6 +414,9 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 		dhGroup:                  dhGroup,
 		dhPublic:                 dhPublic,
 		dhSecret:                 dhSecret,
+		dhGroupBSK:               dhGroupBSK,
+		dhPublicBSK:              dhPublicBSK,
+		dhSecretBSK:              dhSecretBSK,
 		pskSecret:                pskSecret,
 		selectedPSK:              selectedPSK,
 		cert:                     cert,
@@ -451,6 +478,9 @@ type serverStateNegotiated struct {
 	dhGroup                  NamedGroup
 	dhPublic                 []byte
 	dhSecret                 []byte
+	dhGroupBSK               NamedGroup
+	dhPublicBSK              []byte
+	dhSecretBSK              []byte
 	pskSecret                []byte
 	clientEarlyTrafficSecret []byte
 	selectedPSK              int
@@ -497,6 +527,16 @@ func (state serverStateNegotiated) Next(_ handshakeMessageReader) (HandshakeStat
 		})
 		if err != nil {
 			logf(logTypeHandshake, "[ServerStateNegotiated] Error adding key_shares extension [%v]", err)
+			return nil, nil, AlertInternalError
+		}
+	}
+	if state.Params.UsingBSK {
+		logf(logTypeHandshake, "[ServerStateNegotiated] sending BSK extension")
+		err := sh.Extensions.Add(&BootstrapKeyExtensionSH{
+			KeyExchange: state.dhPublicBSK,
+		})
+		if err != nil {
+			logf(logTypeHandshake, "[ServerStateNegotiated] Error adding BSK extension [%v]", err)
 			return nil, nil, AlertInternalError
 		}
 	}
@@ -554,11 +594,23 @@ func (state serverStateNegotiated) Next(_ handshakeMessageReader) (HandshakeStat
 	if state.dhSecret == nil {
 		state.dhSecret = zero
 	}
+	if state.dhSecretBSK == nil {
+		state.dhSecretBSK = zero
+	}
 
 	h0 := params.Hash.New().Sum(nil)
 	h2 := handshakeHash.Sum(nil)
+	var handshakeSecret []byte
 	preHandshakeSecret := deriveSecret(params, earlySecret, labelDerived, h0)
-	handshakeSecret := HkdfExtract(params.Hash, preHandshakeSecret, state.dhSecret)
+	if (state.Params.UsingBSK) {
+		bskInput := HkdfExtract(params.Hash, preHandshakeSecret, state.dhSecretBSK)
+		bskSecret := deriveSecret(params, bskInput, "derived", h0)
+		logf(logTypeCrypto, "bskInput [%d] %x", len(bskInput), bskInput)
+		logf(logTypeCrypto, "bskSecret [%d] %x", len(bskSecret), bskSecret)
+		handshakeSecret = HkdfExtract(params.Hash, bskSecret, state.dhSecret)
+	} else {
+		handshakeSecret = HkdfExtract(params.Hash, preHandshakeSecret, state.dhSecret)
+	}
 	clientHandshakeTrafficSecret := deriveSecret(params, handshakeSecret, labelClientHandshakeTrafficSecret, h2)
 	serverHandshakeTrafficSecret := deriveSecret(params, handshakeSecret, labelServerHandshakeTrafficSecret, h2)
 	preMasterSecret := deriveSecret(params, handshakeSecret, labelDerived, h0)

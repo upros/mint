@@ -54,6 +54,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:           []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:               &PSKMapCache{},
+					ServerBSKs:         &BSKMapCache{},
 					InsecureSkipVerify: true,
 				},
 				clientOptions: ConnectionOptions{
@@ -66,6 +67,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:         []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:     []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:             &PSKMapCache{},
+					ServerBSKs:       &BSKMapCache{},
 					Certificates:     certificates,
 					CookieProtector:  cookieProtector,
 				},
@@ -94,6 +96,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:           []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:               &PSKMapCache{},
+					ServerBSKs:         &BSKMapCache{},
 					InsecureSkipVerify: true,
 				},
 				clientOptions: ConnectionOptions{
@@ -106,6 +109,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:         []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:     []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:             &PSKMapCache{},
+					ServerBSKs:       &BSKMapCache{},
 					Certificates:     certificates,
 					RequireCookie:    true,
 					CookieProtector:  cookieProtector,
@@ -141,6 +145,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKs: &PSKMapCache{
 						"example.com": psk,
 					},
+					ServerBSKs:       &BSKMapCache{},
 					InsecureSkipVerify: true,
 				},
 				clientOptions: ConnectionOptions{
@@ -155,6 +160,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKs: &PSKMapCache{
 						"00010203": psk,
 					},
+					ServerBSKs:       &BSKMapCache{},
 					Certificates: certificates,
 				},
 				clientStateSequence: []HandshakeState{
@@ -233,6 +239,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKs: &PSKMapCache{
 						"example.com": psk,
 					},
+					ServerBSKs:       &BSKMapCache{},
 					InsecureSkipVerify: true,
 				},
 				clientOptions: ConnectionOptions{
@@ -245,6 +252,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:         []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:     []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:             &PSKMapCache{},
+					ServerBSKs:       &BSKMapCache{},
 					Certificates:     certificates,
 				},
 				clientStateSequence: []HandshakeState{
@@ -273,6 +281,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:           []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:               &PSKMapCache{},
+					ServerBSKs:         &BSKMapCache{},
 					Certificates:       certificates,
 					InsecureSkipVerify: true,
 				},
@@ -286,6 +295,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:          []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:      []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:              &PSKMapCache{},
+					ServerBSKs:        &BSKMapCache{},
 					Certificates:      certificates,
 					RequireClientAuth: true,
 				},
@@ -318,6 +328,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:           []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:               &PSKMapCache{},
+					ServerBSKs:         &BSKMapCache{},
 					InsecureSkipVerify: true,
 				},
 				clientOptions: ConnectionOptions{
@@ -330,6 +341,7 @@ func TestStateMachineIntegration(t *testing.T) {
 					PSKModes:          []PSKKeyExchangeMode{PSKModeDHEKE},
 					CipherSuites:      []CipherSuite{TLS_AES_128_GCM_SHA256},
 					PSKs:              &PSKMapCache{},
+					ServerBSKs:        &BSKMapCache{},
 					Certificates:      certificates,
 					RequireClientAuth: true,
 				},
