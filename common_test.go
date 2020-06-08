@@ -33,6 +33,21 @@ func assertTrue(t *testing.T, test bool, msg string) {
 	}
 }
 
+func assertFalse(t *testing.T, test bool, msg string) {
+	t.Helper()
+	prefix := string("")
+	for i := 1; ; i++ {
+		_, file, line, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		prefix = fmt.Sprintf("%v: %d\n", file, line) + prefix
+	}
+	if test {
+		t.Fatalf(prefix + msg)
+	}
+}
+
 func assertError(t *testing.T, err error, msg string) {
 	t.Helper()
 	assertTrue(t, err != nil, msg)

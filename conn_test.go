@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -179,7 +180,10 @@ var (
 	psk  PreSharedKey
 	psks *PSKMapCache
 
-	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, resumptionConfig, ffdhConfig, x25519Config *Config
+	clientBsk               BootstrapKey
+	foundBsks, notFoundBsks *BSKMapCache
+
+	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, bskConfigFound, bskConfigNotFound, bskAndPskConfig, resumptionConfig, ffdhConfig, x25519Config *Config
 )
 
 func init() {
@@ -203,6 +207,49 @@ func init() {
 		Identity:     []byte{0, 1, 2, 3},
 		Key:          []byte{4, 5, 6, 7},
 	}
+
+	foundBsks = &BSKMapCache{}
+	notFoundBsks = &BSKMapCache{}
+	bskPub, bskPriv, err := newKeyShare(P256)
+	if err != nil {
+		panic(err)
+	}
+
+	h := sha256.New()
+	h.Write(bskPub)
+	bskHash := h.Sum(nil)
+
+	clientBsk = BootstrapKey{
+		priv:  bskPriv,
+		pub:   bskPub,
+		hPub:  bskHash,
+		group: P256,
+	}
+
+	serverBsk1 := BootstrapKey{
+		pub:   bskPub,
+		hPub:  bskHash,
+		group: P256,
+	}
+
+	foundBsks.Put(bskHash, serverBsk1)
+
+	bskPub, bskPriv, err = newKeyShare(P256)
+	if err != nil {
+		panic(err)
+	}
+
+	h = sha256.New()
+	h.Write(bskPub)
+	bskHash = h.Sum(nil)
+	serverBsk2 := BootstrapKey{
+		pub:   bskPub,
+		hPub:  bskHash,
+		group: P256,
+	}
+	foundBsks.Put(bskHash, serverBsk2)
+	notFoundBsks.Put(bskHash, serverBsk2)
+
 	certificates = []*Certificate{
 		{
 			Chain:      []*x509.Certificate{serverCert},
@@ -279,7 +326,6 @@ func init() {
 		NonBlocking:        true,
 		InsecureSkipVerify: true,
 	}
-
 	pskECDHEConfig = &Config{
 		ServerName:         serverName,
 		CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
@@ -294,6 +340,34 @@ func init() {
 		Certificates:       certificates,
 		PSKs:               psks,
 		Groups:             []NamedGroup{FFDHE2048},
+		InsecureSkipVerify: true,
+	}
+
+	bskConfigFound = &Config{
+		ServerName:         serverName,
+		CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
+		Certificates:       certificates,
+		ClientBSK:          clientBsk,
+		ServerBSKs:         foundBsks,
+		InsecureSkipVerify: true,
+	}
+
+	bskConfigNotFound = &Config{
+		ServerName:         serverName,
+		CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
+		Certificates:       certificates,
+		ClientBSK:          clientBsk,
+		ServerBSKs:         notFoundBsks,
+		InsecureSkipVerify: true,
+	}
+
+	bskAndPskConfig = &Config{
+		ServerName:         serverName,
+		CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
+		Certificates:       certificates,
+		ClientBSK:          clientBsk,
+		ServerBSKs:         foundBsks,
+		PSKs:               psks,
 		InsecureSkipVerify: true,
 	}
 
@@ -765,6 +839,83 @@ func TestPSKFlows(t *testing.T) {
 
 		assertTrue(t, client.state.Params.UsingPSK, "Session did not use the provided PSK")
 	}
+}
+
+func TestBSKFoundFlow(t *testing.T) {
+	cConn, sConn := pipe()
+
+	client := Client(cConn, bskConfigFound)
+	server := Server(sConn, bskConfigFound)
+
+	var clientAlert, serverAlert Alert
+
+	done := make(chan bool)
+	go func(t *testing.T) {
+		serverAlert = server.Handshake()
+		assertEquals(t, serverAlert, AlertNoAlert)
+		done <- true
+	}(t)
+
+	clientAlert = client.Handshake()
+	assertEquals(t, clientAlert, AlertNoAlert)
+
+	<-done
+
+	checkConsistency(t, client, server)
+
+	assertTrue(t, client.state.Params.UsingBSK, "Session did not use the provided BSK")
+}
+
+func TestBSKNotFoundFlow(t *testing.T) {
+	cConn, sConn := pipe()
+
+	client := Client(cConn, bskConfigNotFound)
+	server := Server(sConn, bskConfigNotFound)
+
+	var clientAlert, serverAlert Alert
+
+	done := make(chan bool)
+	go func(t *testing.T) {
+		serverAlert = server.Handshake()
+		assertEquals(t, serverAlert, AlertNoAlert)
+		done <- true
+	}(t)
+
+	clientAlert = client.Handshake()
+	assertEquals(t, clientAlert, AlertNoAlert)
+
+	<-done
+
+	checkConsistency(t, client, server)
+
+	assertFalse(t, client.state.Params.UsingBSK, "Session used an unmatched BSK")
+}
+
+func TestBSKAndPSKFlow(t *testing.T) {
+
+	cConn, sConn := pipe()
+
+	client := Client(cConn, bskAndPskConfig)
+	server := Server(sConn, bskAndPskConfig)
+
+	var clientAlert, serverAlert Alert
+
+	done := make(chan bool)
+	go func(t *testing.T) {
+		serverAlert = server.Handshake()
+		assertEquals(t, serverAlert, AlertNoAlert)
+		done <- true
+	}(t)
+
+	clientAlert = client.Handshake()
+	assertEquals(t, clientAlert, AlertNoAlert)
+
+	<-done
+
+	checkConsistency(t, client, server)
+
+	assertTrue(t, client.state.Params.UsingPSK, "Session did not use the provided PSK")
+	assertTrue(t, client.state.Params.UsingBSK, "Session did not use the provided BSK")
 }
 
 func TestNonBlockingReadBeforeConnected(t *testing.T) {
