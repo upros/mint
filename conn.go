@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -34,36 +33,6 @@ type PreSharedKeyCache interface {
 	Get(string) (PreSharedKey, bool)
 	Put(string, PreSharedKey)
 	Size() int
-}
-
-type BootstrapKey struct {
-	pub   []byte
-	hPub  []byte
-	priv  []byte
-	group NamedGroup
-}
-
-type BootstrapKeyCache interface {
-	Get([]byte) (BootstrapKey, bool)
-	Put([]byte, BootstrapKey)
-	Size() int
-}
-
-type BSKMapCache map[string]BootstrapKey
-
-func (cache BSKMapCache) Get(key []byte) (bsk BootstrapKey, ok bool) {
-	b64 := base64.StdEncoding.EncodeToString(key)
-	bsk, ok = cache[b64]
-	return
-}
-
-func (cache *BSKMapCache) Put(key []byte, bsk BootstrapKey) {
-	b64 := base64.StdEncoding.EncodeToString(key)
-	(*cache)[b64] = bsk
-}
-
-func (cache BSKMapCache) Size() int {
-	return len(cache)
 }
 
 // A CookieHandler can be used to give the application more fine-grained control over Cookies.
@@ -159,8 +128,6 @@ type Config struct {
 	PSKModes         []PSKKeyExchangeMode
 	NonBlocking      bool
 	UseDTLS          bool
-	ClientBSK        BootstrapKey
-	ServerBSKs       BootstrapKeyCache
 
 	RecordLayer RecordLayerFactory
 
@@ -202,8 +169,6 @@ func (c *Config) Clone() *Config {
 		PSKModes:              c.PSKModes,
 		NonBlocking:           c.NonBlocking,
 		UseDTLS:               c.UseDTLS,
-		ClientBSK:             c.ClientBSK,
-		ServerBSKs:            c.ServerBSKs,
 	}
 }
 
@@ -226,9 +191,6 @@ func (c *Config) Init(isClient bool) error {
 	}
 	if !reflect.ValueOf(c.PSKs).IsValid() {
 		c.PSKs = &PSKMapCache{}
-	}
-	if !reflect.ValueOf(c.ServerBSKs).IsValid() {
-		c.ServerBSKs = &BSKMapCache{}
 	}
 	if len(c.PSKModes) == 0 {
 		c.PSKModes = defaultPSKModes
