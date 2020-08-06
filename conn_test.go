@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"github.com/bifurcation/mint/syntax"
 	"io"
 	"math/big"
 	"net"
@@ -179,7 +180,10 @@ var (
 	psk  PreSharedKey
 	psks *PSKMapCache
 
-	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, resumptionConfig, ffdhConfig, x25519Config *Config
+	clientPake  PAKEKey
+	serverPakes *PAKEMapCache
+
+	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, pakeConfig, resumptionConfig, ffdhConfig, x25519Config *Config
 )
 
 func init() {
@@ -203,6 +207,53 @@ func init() {
 		Identity:     []byte{0, 1, 2, 3},
 		Key:          []byte{4, 5, 6, 7},
 	}
+
+	pakeId := []byte{9, 8, 7, 6, 5}
+	serverPakes = &PAKEMapCache{}
+	PubU, PrivU, _ := newKeyShare(P256)
+	PubS, PrivS, _ := newKeyShare(P256)
+	PwdU := []byte{1, 2, 3, 4, 5, 6}
+	hash := crypto.SHA256
+	crv := elliptic.P256()
+	client := NewDHOPRFClient(hash, crv)
+	server, _ := NewDHOPRFServer(hash, crv)
+	regPwdRequest, _ := client.CreateRequest(PwdU)
+	regPwdResponse := server.HandleRequest(regPwdRequest)
+	RwdU := client.HandleResponse(regPwdResponse)
+	EnvU := EnvU{
+		PubU:  PubU,
+		PrivU: PrivU,
+		PubS:  PubS,
+	}
+	EnvUbytes, _ := syntax.Marshal(EnvU)
+
+	EncEnvU := AuthEnc(pakeId, RwdU, EnvUbytes)
+
+	clientPake = PAKEKey{
+		hash:  hash,
+		crv:   crv,
+		id:    pakeId,
+		PwdU:  PwdU,
+		group: P256,
+	}
+
+	serverPake := PAKEKey{
+		hash:  hash,
+		crv:   crv,
+		id:    pakeId,
+		EnvU:  EnvUbytes,
+		EncU:  EncEnvU,
+		PubU:  PubU,
+		PubS:  PubS,
+		PrivS: PrivS,
+		k:     server.k,
+		vx:    server.vx,
+		vy:    server.vy,
+		group: P256,
+	}
+
+	serverPakes.Put(serverPake.id, serverPake)
+
 	certificates = []*Certificate{
 		{
 			Chain:      []*x509.Certificate{serverCert},
@@ -294,6 +345,15 @@ func init() {
 		Certificates:       certificates,
 		PSKs:               psks,
 		Groups:             []NamedGroup{FFDHE2048},
+		InsecureSkipVerify: true,
+	}
+
+	pakeConfig = &Config{
+		ServerName:         serverName,
+		CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
+		Certificates:       certificates,
+		ClientPAKE:         clientPake,
+		ServerPAKEs:        serverPakes,
 		InsecureSkipVerify: true,
 	}
 
@@ -765,6 +825,31 @@ func TestPSKFlows(t *testing.T) {
 
 		assertTrue(t, client.state.Params.UsingPSK, "Session did not use the provided PSK")
 	}
+}
+
+func TestPAKEFlow(t *testing.T) {
+	cConn, sConn := pipe()
+
+	client := Client(cConn, pakeConfig)
+	server := Server(sConn, pakeConfig)
+
+	var clientAlert, serverAlert Alert
+
+	done := make(chan bool)
+	go func(t *testing.T) {
+		serverAlert = server.Handshake()
+		assertEquals(t, serverAlert, AlertNoAlert)
+		done <- true
+	}(t)
+
+	clientAlert = client.Handshake()
+	assertEquals(t, clientAlert, AlertNoAlert)
+
+	<-done
+
+	checkConsistency(t, client, server)
+
+	assertTrue(t, client.state.Params.UsingPAKE, "Session did not use the provided PAKE")
 }
 
 func TestNonBlockingReadBeforeConnected(t *testing.T) {

@@ -57,6 +57,7 @@ type ConnectionOptions struct {
 type ConnectionParameters struct {
 	UsingPSK               bool
 	UsingDH                bool
+	UsingPAKE              bool
 	ClientSendingEarlyData bool
 	UsingEarlyData         bool
 	RejectedEarlyData      bool

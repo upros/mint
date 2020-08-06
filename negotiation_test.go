@@ -27,7 +27,7 @@ func TestDHNegotiation(t *testing.T) {
 	}
 
 	// Test successful negotiation
-	ok, group, pub, secret := DHNegotiation(keyShares, []NamedGroup{X25519})
+	ok, group, pub, secret, _, _ := DHNegotiation(keyShares, []NamedGroup{X25519})
 	assertEquals(t, ok, true)
 	assertEquals(t, group, X25519)
 	assertNotNil(t, pub, "Nil public key")
@@ -38,19 +38,19 @@ func TestDHNegotiation(t *testing.T) {
 	// least cover the branch
 	originalPRNG := prng
 	prng = bytes.NewBuffer(nil)
-	ok, group, pub, secret = DHNegotiation(badKeyShares, []NamedGroup{P256, X25519})
+	ok, group, pub, secret, _, _ = DHNegotiation(badKeyShares, []NamedGroup{P256, X25519})
 	assertEquals(t, ok, false)
 	prng = originalPRNG
 
 	// Test continuation on keyAgreement failure
-	ok, group, pub, secret = DHNegotiation(badKeyShares, []NamedGroup{P256, X25519})
+	ok, group, pub, secret, _, _ = DHNegotiation(badKeyShares, []NamedGroup{P256, X25519})
 	assertEquals(t, ok, true)
 	assertEquals(t, group, X25519)
 	assertNotNil(t, pub, "Nil public key")
 	assertNotNil(t, secret, "Nil DH secret")
 
 	// Test failure
-	ok, _, _, _ = DHNegotiation(keyShares, []NamedGroup{P521})
+	ok, _, _, _, _, _ = DHNegotiation(keyShares, []NamedGroup{P521})
 	assertEquals(t, ok, false)
 }
 

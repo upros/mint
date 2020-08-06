@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/x509"
+	"github.com/bifurcation/mint/syntax"
 	"hash"
 	"time"
 )
@@ -154,6 +155,22 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 		}
 	}
 
+	// Handle PAKE
+	var oprfClient *DHOPRF
+
+	if len(state.Config.ClientPAKE.id) != 0 {
+		// Add the PAKE extension to the ClientHello
+		logf(logTypeHandshake, "[ClientStateStart] Adding PAKE extension ", state.Config.ClientPAKE.id)
+		oprfClient = NewDHOPRFClient(state.Config.ClientPAKE.hash, state.Config.ClientPAKE.crv)
+		oprf_1, _ := oprfClient.CreateRequest(state.Config.ClientPAKE.PwdU)
+
+		pakeExt := &PAKEServerAuthExtensionCH{
+			Identity: state.Config.ClientPAKE.id,
+			OPRF_1:   oprf_1.Alpha,
+		}
+		ch.Extensions.Add(pakeExt)
+	}
+
 	// Handle PSK and EarlyData just before transmitting, so that we can
 	// calculate the PSK binder value
 	var psk *PreSharedKeyExtension
@@ -278,6 +295,8 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 		OfferedDH:  offeredDH,
 		OfferedPSK: offeredPSK,
 
+		OPRFClient: oprfClient,
+
 		earlySecret: earlySecret,
 		earlyHash:   earlyHash,
 
@@ -307,6 +326,8 @@ type clientStateWaitSH struct {
 	OfferedDH  map[NamedGroup][]byte
 	OfferedPSK PreSharedKey
 	PSK        []byte
+
+	OPRFClient *DHOPRF
 
 	earlySecret []byte
 	earlyHash   crypto.Hash
@@ -459,8 +480,9 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 	}
 
 	var dhSecret []byte
+	var dhPriv []byte
+	sks := serverKeyShare.Shares[0]
 	if foundExts[ExtensionTypeKeyShare] {
-		sks := serverKeyShare.Shares[0]
 		priv, ok := state.OfferedDH[sks.Group]
 		if !ok {
 			logf(logTypeHandshake, "[ClientStateWaitSH] Key share for unknown group")
@@ -468,6 +490,7 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 		}
 
 		state.Params.UsingDH = true
+		dhPriv = priv
 		dhSecret, _ = keyAgreement(sks.Group, sks.KeyExchange, priv)
 	}
 
@@ -529,6 +552,11 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 		hsCtx:                        state.hsCtx,
 		cryptoParams:                 params,
 		handshakeHash:                handshakeHash,
+		OPRFClient:                   state.OPRFClient,
+		sks:                          sks,
+		dhPriv:                       dhPriv,
+		dhSecret:                     dhSecret,
+		preMasterSecret:              preMasterSecret,
 		masterSecret:                 masterSecret,
 		clientHandshakeTrafficSecret: clientHandshakeTrafficSecret,
 		serverHandshakeTrafficSecret: serverHandshakeTrafficSecret,
@@ -552,6 +580,11 @@ type clientStateWaitEE struct {
 	hsCtx                        *HandshakeContext
 	cryptoParams                 CipherSuiteParams
 	handshakeHash                hash.Hash
+	OPRFClient                   *DHOPRF
+	sks                          KeyShareEntry
+	dhPriv                       []byte
+	dhSecret                     []byte
+	preMasterSecret              []byte
 	masterSecret                 []byte
 	clientHandshakeTrafficSecret []byte
 	serverHandshakeTrafficSecret []byte
@@ -590,11 +623,13 @@ func (state clientStateWaitEE) Next(hr handshakeMessageReader) (HandshakeState, 
 
 	serverALPN := &ALPNExtension{}
 	serverEarlyData := &EarlyDataExtension{}
+	serverPAKE := &PAKEServerAuthExtensionEE{}
 
 	foundExts, err := ee.Extensions.Parse(
 		[]ExtensionBody{
 			serverALPN,
 			serverEarlyData,
+			serverPAKE,
 		})
 	if err != nil {
 		logf(logTypeHandshake, "[ClientStateWaitEE] Error decoding extensions: %v", err)
@@ -605,6 +640,29 @@ func (state clientStateWaitEE) Next(hr handshakeMessageReader) (HandshakeState, 
 
 	if foundExts[ExtensionTypeALPN] && len(serverALPN.Protocols) > 0 {
 		state.Params.NextProto = serverALPN.Protocols[0]
+	}
+
+	if len(state.Config.ClientPAKE.id) != 0 {
+		if foundExts[ExtensionTypePAKEServerAuth] {
+			zero := bytes.Repeat([]byte{0}, state.cryptoParams.Hash.Size())
+			var EnvU EnvU
+			response := DHOPRFResponse{
+				Beta: serverPAKE.OPRF_2,
+				vU:   serverPAKE.Vu,
+			}
+			RwdU := state.OPRFClient.HandleResponse(&response)
+			EnvUbytes := AuthDec(serverPAKE.Identity, RwdU, serverPAKE.EnvU)
+			syntax.Unmarshal(EnvUbytes, &EnvU)
+			state.Params.UsingPAKE = true
+			dh1, _ := keyAgreement(state.sks.Group, EnvU.PubS, state.dhPriv)
+			dh2, _ := keyAgreement(state.sks.Group, state.sks.KeyExchange, EnvU.PrivU)
+			hkdfInput := append(state.dhSecret, dh1...)
+			hkdfInput = append(hkdfInput, dh2...)
+			hkdfInput = append(hkdfInput, state.Config.ClientPAKE.id...)
+			pakeInput := HkdfExtract(state.cryptoParams.Hash, zero, hkdfInput)
+			// Update the masterSecret with PAKE input
+			state.masterSecret = HkdfExtract(state.cryptoParams.Hash, state.preMasterSecret, pakeInput)
+		}
 	}
 
 	state.handshakeHash.Write(hm.Marshal())

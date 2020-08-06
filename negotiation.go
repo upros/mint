@@ -22,7 +22,7 @@ func VersionNegotiation(offered, supported []uint16) (bool, uint16) {
 	return false, 0
 }
 
-func DHNegotiation(keyShares []KeyShareEntry, groups []NamedGroup) (bool, NamedGroup, []byte, []byte) {
+func DHNegotiation(keyShares []KeyShareEntry, groups []NamedGroup) (bool, NamedGroup, []byte, []byte, []byte, []byte) {
 	for _, share := range keyShares {
 		for _, group := range groups {
 			if group != share.Group {
@@ -41,11 +41,11 @@ func DHNegotiation(keyShares []KeyShareEntry, groups []NamedGroup) (bool, NamedG
 				continue
 			}
 
-			return true, group, pub, dhSecret
+			return true, group, pub, dhSecret, priv, share.KeyExchange
 		}
 	}
 
-	return false, 0, nil, nil
+	return false, 0, nil, nil, nil, nil
 }
 
 const (

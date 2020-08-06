@@ -118,6 +118,7 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	signatureAlgorithms := new(SignatureAlgorithmsExtension)
 	clientKeyShares := &KeyShareExtension{HandshakeType: HandshakeTypeClientHello}
 	clientPSK := &PreSharedKeyExtension{HandshakeType: HandshakeTypeClientHello}
+	clientPAKE := new(PAKEServerAuthExtensionCH)
 	clientEarlyData := &EarlyDataExtension{}
 	clientALPN := new(ALPNExtension)
 	clientPSKModes := new(PSKKeyExchangeModesExtension)
@@ -141,6 +142,7 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 			clientEarlyData,
 			clientKeyShares,
 			clientPSK,
+			clientPAKE,
 			clientALPN,
 			clientPSKModes,
 			clientCookie,
@@ -206,8 +208,29 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 		return nil, nil, AlertIllegalParameter
 	}
 
+	// Did client offer PAKE
+	var oprfResp *DHOPRFResponse
+	if foundExts[ExtensionTypePAKEServerAuth] {
+		logf(logTypeHandshake, "[ServerStateStart] Client offered PAKE")
+		if pake, ok := state.Config.ServerPAKEs.Get(clientPAKE.Identity); ok {
+			logf(logTypeHandshake, "[ServerStateStart] Found matching PAKE", clientPAKE.Identity)
+			server := &DHOPRF{
+				hash: pake.hash,
+				crv:  pake.crv,
+				k:    pake.k,
+				vx:   pake.vx,
+				vy:   pake.vy,
+			}
+			request := DHOPRFRequest{
+				Alpha: clientPAKE.OPRF_1,
+			}
+			oprfResp = server.HandleRequest(&request)
+			connParams.UsingPAKE = true
+		}
+	}
+
 	// Figure out if we can do DH
-	canDoDH, dhGroup, dhPublic, dhSecret := DHNegotiation(clientKeyShares.Shares, state.Config.Groups)
+	canDoDH, dhGroup, dhPublic, dhSecret, dhSPriv, dhCPub := DHNegotiation(clientKeyShares.Shares, state.Config.Groups)
 
 	// Figure out if we can do PSK
 	var canDoPSK bool
@@ -390,8 +413,12 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 		dhGroup:                  dhGroup,
 		dhPublic:                 dhPublic,
 		dhSecret:                 dhSecret,
+		dhSPriv:                  dhSPriv,
+		dhCPub:                   dhCPub,
 		pskSecret:                pskSecret,
 		selectedPSK:              selectedPSK,
+		selectedPAKE:             clientPAKE.Identity,
+		oprfResponse:             oprfResp,
 		cert:                     cert,
 		certScheme:               certScheme,
 		legacySessionId:          ch.LegacySessionID,
@@ -452,6 +479,10 @@ type serverStateNegotiated struct {
 	dhPublic                 []byte
 	dhSecret                 []byte
 	pskSecret                []byte
+	selectedPAKE             []byte
+	dhSPriv                  []byte
+	dhCPub                   []byte
+	oprfResponse             *DHOPRFResponse
 	clientEarlyTrafficSecret []byte
 	selectedPSK              int
 	cert                     *Certificate
@@ -500,6 +531,7 @@ func (state serverStateNegotiated) Next(_ handshakeMessageReader) (HandshakeStat
 			return nil, nil, AlertInternalError
 		}
 	}
+
 	if state.Params.UsingPSK {
 		logf(logTypeHandshake, "[ServerStateNegotiated] sending PSK extension")
 		err := sh.Extensions.Add(&PreSharedKeyExtension{
@@ -562,7 +594,27 @@ func (state serverStateNegotiated) Next(_ handshakeMessageReader) (HandshakeStat
 	clientHandshakeTrafficSecret := deriveSecret(params, handshakeSecret, labelClientHandshakeTrafficSecret, h2)
 	serverHandshakeTrafficSecret := deriveSecret(params, handshakeSecret, labelServerHandshakeTrafficSecret, h2)
 	preMasterSecret := deriveSecret(params, handshakeSecret, labelDerived, h0)
-	masterSecret := HkdfExtract(params.Hash, preMasterSecret, zero)
+
+	var masterSecret []byte
+	var pake PAKEKey
+	if state.Params.UsingPAKE {
+		pake, _ = state.Config.ServerPAKEs.Get(state.selectedPAKE)
+		// key_schedule input =
+		// HKDF( key_share_PubU ^ key_share_PrivS |
+		//       key_share_PubU ^ PrivS |
+		//       PubU ^ key_share_PrivS )
+
+		dh1, _ := keyAgreement(state.dhGroup, state.dhCPub, pake.PrivS)
+		dh2, _ := keyAgreement(state.dhGroup, pake.PubU, state.dhSPriv)
+		hkdfInput := append(state.dhSecret, dh1...)
+		hkdfInput = append(hkdfInput, dh2...)
+		hkdfInput = append(hkdfInput, state.selectedPAKE...)
+
+		pakeInput := HkdfExtract(params.Hash, zero, hkdfInput)
+		masterSecret = HkdfExtract(params.Hash, preMasterSecret, pakeInput)
+	} else {
+		masterSecret = HkdfExtract(params.Hash, preMasterSecret, zero)
+	}
 
 	logf(logTypeCrypto, "early secret (init!): [%d] %x", len(earlySecret), earlySecret)
 	logf(logTypeCrypto, "handshake secret: [%d] %x", len(handshakeSecret), handshakeSecret)
@@ -588,6 +640,19 @@ func (state serverStateNegotiated) Next(_ handshakeMessageReader) (HandshakeStat
 		err = eeList.Add(&EarlyDataExtension{})
 		if err != nil {
 			logf(logTypeHandshake, "[ServerStateNegotiated] Error adding EDI to EncryptedExtensions [%v]", err)
+			return nil, nil, AlertInternalError
+		}
+	}
+	if state.Params.UsingPAKE {
+		logf(logTypeHandshake, "[ServerStateNegotiated] sending PAKE extension")
+		err := eeList.Add(&PAKEServerAuthExtensionEE{
+			Identity: state.selectedPAKE,
+			OPRF_2:   state.oprfResponse.Beta,
+			Vu:       state.oprfResponse.vU,
+			EnvU:     pake.EncU,
+		})
+		if err != nil {
+			logf(logTypeHandshake, "[ServerStateNegotiated] Error adding PAKE extension [%v]", err)
 			return nil, nil, AlertInternalError
 		}
 	}

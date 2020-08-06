@@ -2,11 +2,14 @@ package mint
 
 import (
 	"crypto"
+	"crypto/elliptic"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"reflect"
 	"sync"
@@ -33,6 +36,45 @@ type PreSharedKeyCache interface {
 	Get(string) (PreSharedKey, bool)
 	Put(string, PreSharedKey)
 	Size() int
+}
+
+type PAKEKey struct {
+	hash  crypto.Hash
+	crv   elliptic.Curve
+	id    []byte
+	PwdU  []byte
+	EnvU  []byte
+	EncU  []byte
+	PubS  []byte
+	PrivS []byte
+	PubU  []byte
+	k     []byte
+	vx    *big.Int
+	vy    *big.Int
+	group NamedGroup
+}
+
+type PAKEKeyCache interface {
+	Get([]byte) (PAKEKey, bool)
+	Put([]byte, PAKEKey)
+	Size() int
+}
+
+type PAKEMapCache map[string]PAKEKey
+
+func (cache PAKEMapCache) Get(key []byte) (pake PAKEKey, ok bool) {
+	b64 := base64.StdEncoding.EncodeToString(key)
+	pake, ok = cache[b64]
+	return
+}
+
+func (cache *PAKEMapCache) Put(key []byte, pake PAKEKey) {
+	b64 := base64.StdEncoding.EncodeToString(key)
+	(*cache)[b64] = pake
+}
+
+func (cache PAKEMapCache) Size() int {
+	return len(cache)
 }
 
 // A CookieHandler can be used to give the application more fine-grained control over Cookies.
@@ -128,6 +170,8 @@ type Config struct {
 	PSKModes         []PSKKeyExchangeMode
 	NonBlocking      bool
 	UseDTLS          bool
+	ClientPAKE       PAKEKey
+	ServerPAKEs      PAKEKeyCache
 
 	RecordLayer RecordLayerFactory
 
@@ -169,6 +213,8 @@ func (c *Config) Clone() *Config {
 		PSKModes:              c.PSKModes,
 		NonBlocking:           c.NonBlocking,
 		UseDTLS:               c.UseDTLS,
+		ClientPAKE:            c.ClientPAKE,
+		ServerPAKEs:           c.ServerPAKEs,
 	}
 }
 
@@ -191,6 +237,9 @@ func (c *Config) Init(isClient bool) error {
 	}
 	if !reflect.ValueOf(c.PSKs).IsValid() {
 		c.PSKs = &PSKMapCache{}
+	}
+	if !reflect.ValueOf(c.ServerPAKEs).IsValid() {
+		c.ServerPAKEs = &PAKEMapCache{}
 	}
 	if len(c.PSKModes) == 0 {
 		c.PSKModes = defaultPSKModes
@@ -255,6 +304,7 @@ type ConnectionState struct {
 	NextProto        string                // Selected ALPN proto
 	UsingPSK         bool                  // Are we using PSK.
 	UsingEarlyData   bool                  // Did we negotiate 0-RTT.
+	UsingPAKE        bool
 }
 
 // Conn implements the net.Conn interface, as with "crypto/tls"

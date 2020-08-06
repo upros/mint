@@ -624,3 +624,48 @@ func (c CookieExtension) Marshal() ([]byte, error) {
 func (c *CookieExtension) Unmarshal(data []byte) (int, error) {
 	return syntax.Unmarshal(data, c)
 }
+
+// struct {
+//     opaque bsk<1..2^16-1>;
+// } BootstrapKey;
+type PAKEServerAuthExtensionCH struct {
+	Identity []byte `tls:"head=2,min=1"`
+	OPRF_1   []byte `tls:"head=2,min=1"`
+}
+
+func (pake PAKEServerAuthExtensionCH) Type() ExtensionType {
+	return ExtensionTypePAKEServerAuth
+}
+
+func (pake PAKEServerAuthExtensionCH) Marshal() ([]byte, error) {
+	return syntax.Marshal(pake)
+}
+
+func (pake *PAKEServerAuthExtensionCH) Unmarshal(data []byte) (int, error) {
+	return syntax.Unmarshal(data, pake)
+}
+
+// struct {
+//     opaque identity<1..2^16-1>;
+//     opaque OPRF_2<1..2^16-1>;
+//     opaque vU<1..2^16-1>;
+//     opaque EnvU<1..2^16-1>;
+// } PAKEServerAuth;
+type PAKEServerAuthExtensionEE struct {
+	Identity []byte `tls:"head=2,min=1"`
+	OPRF_2   []byte `tls:"head=2,min=1"`
+	Vu       []byte `tls:"head=2,min=1"`
+	EnvU     []byte `tls:"head=2,min=1"`
+}
+
+func (pake PAKEServerAuthExtensionEE) Type() ExtensionType {
+	return ExtensionTypePAKEServerAuth
+}
+
+func (pake PAKEServerAuthExtensionEE) Marshal() ([]byte, error) {
+	return syntax.Marshal(pake)
+}
+
+func (pake *PAKEServerAuthExtensionEE) Unmarshal(data []byte) (int, error) {
+	return syntax.Unmarshal(data, pake)
+}
