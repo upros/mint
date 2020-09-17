@@ -200,7 +200,10 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-
+	
+	certPool := x509.NewCertPool()
+	certPool.AddCert(serverCert)
+	
 	psk = PreSharedKey{
 		CipherSuite:  TLS_AES_128_GCM_SHA256,
 		IsResumption: false,
@@ -352,9 +355,10 @@ func init() {
 		ServerName:         serverName,
 		CipherSuites:       []CipherSuite{TLS_AES_128_GCM_SHA256},
 		Certificates:       certificates,
+		RootCAs:            certPool,
 		ClientPAKE:         clientPake,
 		ServerPAKEs:        serverPakes,
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: false,
 	}
 
 	resumptionConfig = &Config{
