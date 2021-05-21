@@ -118,6 +118,7 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	signatureAlgorithms := new(SignatureAlgorithmsExtension)
 	clientKeyShares := &KeyShareExtension{HandshakeType: HandshakeTypeClientHello}
 	clientPSK := &PreSharedKeyExtension{HandshakeType: HandshakeTypeClientHello}
+	certWithExternPSK := &CertWithExternPSKExtension{}
 	clientEarlyData := &EarlyDataExtension{}
 	clientALPN := new(ALPNExtension)
 	clientPSKModes := new(PSKKeyExchangeModesExtension)
@@ -141,6 +142,7 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 			clientEarlyData,
 			clientKeyShares,
 			clientPSK,
+			certWithExternPSK,
 			clientALPN,
 			clientPSKModes,
 			clientCookie,
@@ -204,6 +206,11 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	if len(ch.LegacySessionID) != 0 && len(ch.LegacySessionID) != 32 {
 		logf(logTypeHandshake, "[ServerStateStart] invalid session ID")
 		return nil, nil, AlertIllegalParameter
+	}
+
+	if foundExts[ExtensionTypeCertWithExternPSK] {
+		logf(logTypeHandshake, "[ServerStateStart] Found ExtensionTypeCertWithExternPSK")
+		connParams.UsingCertWithExternPSK = true
 	}
 
 	// Figure out if we can do DH
@@ -335,6 +342,8 @@ func (state serverStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 		pskSecret = psk.Key
 	} else {
 		psk = nil
+	}
+	if (connParams.UsingPSK && connParams.UsingCertWithExternPSK) || !connParams.UsingPSK {
 
 		// If we're not using a PSK mode, then we need to have certain extensions
 		if !(foundExts[ExtensionTypeServerName] &&
@@ -512,6 +521,14 @@ func (state serverStateNegotiated) Next(_ handshakeMessageReader) (HandshakeStat
 		}
 	}
 
+	if state.Params.UsingCertWithExternPSK {
+		err := sh.Extensions.Add(&CertWithExternPSKExtension{})
+		if err != nil {
+			logf(logTypeHandshake, "[ServerStateNegotiated] Error adding CertWithExternPSK extension [%v]", err)
+			return nil, nil, AlertInternalError
+		}
+	}
+
 	// Run the external extension handler.
 	if state.Config.ExtensionHandler != nil {
 		err := state.Config.ExtensionHandler.Send(HandshakeTypeServerHello, &sh.Extensions)
@@ -617,7 +634,7 @@ func (state serverStateNegotiated) Next(_ handshakeMessageReader) (HandshakeStat
 	}
 
 	// Authenticate with a certificate if required
-	if !state.Params.UsingPSK {
+	if (state.Params.UsingPSK && state.Params.UsingCertWithExternPSK) || !state.Params.UsingPSK {
 		// Send a CertificateRequest message if we want client auth
 		if state.Config.RequireClientAuth {
 			state.Params.UsingClientAuth = true

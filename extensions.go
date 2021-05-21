@@ -624,3 +624,20 @@ func (c CookieExtension) Marshal() ([]byte, error) {
 func (c *CookieExtension) Unmarshal(data []byte) (int, error) {
 	return syntax.Unmarshal(data, c)
 }
+
+// struct {
+// } CertWithExternPSK;
+
+type CertWithExternPSKExtension struct{}
+
+func (certepsk CertWithExternPSKExtension) Type() ExtensionType {
+	return ExtensionTypeCertWithExternPSK
+}
+
+func (certepsk CertWithExternPSKExtension) Marshal() ([]byte, error) {
+	return []byte{}, nil
+}
+
+func (certepsk *CertWithExternPSKExtension) Unmarshal(data []byte) (int, error) {
+	return 0, nil
+}
