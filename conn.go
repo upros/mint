@@ -121,14 +121,15 @@ type Config struct {
 	// the verifiedChains argument will always be nil.
 	VerifyPeerCertificate func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error
 
-	CipherSuites     []CipherSuite
-	Groups           []NamedGroup
-	SignatureSchemes []SignatureScheme
-	NextProtos       []string
-	PSKs             PreSharedKeyCache
-	PSKModes         []PSKKeyExchangeMode
-	NonBlocking      bool
-	UseDTLS          bool
+	CipherSuites      []CipherSuite
+	Groups            []NamedGroup
+	SignatureSchemes  []SignatureScheme
+	NextProtos        []string
+	PSKs              PreSharedKeyCache
+	PSKModes          []PSKKeyExchangeMode
+	NonBlocking       bool
+	UseDTLS           bool
+	CertWithExternPSK bool
 
 	// These bools are arranged in opposite directions so that their default
 	// values reflect the correct default semantics (certs yes, raw keys no)

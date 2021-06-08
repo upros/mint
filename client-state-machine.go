@@ -187,6 +187,7 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 	// Handle PSK and EarlyData just before transmitting, so that we can
 	// calculate the PSK binder value
 	var psk *PreSharedKeyExtension
+	var certWithExternPSK *CertWithExternPSKExtension
 	var ed *EarlyDataExtension
 	var offeredPSK PreSharedKey
 	var earlyHash crypto.Hash
@@ -244,6 +245,12 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 				// Note: Stub to get the length fields right
 				{Binder: bytes.Repeat([]byte{0x00}, params.Hash.Size())},
 			},
+		}
+
+		if state.Config.CertWithExternPSK == true {
+			logf(logTypeHandshake, "Adding CertWithExternPSKExtension")
+			certWithExternPSK = &CertWithExternPSKExtension{}
+			ch.Extensions.Add(certWithExternPSK)
 		}
 		ch.Extensions.Add(psk)
 
@@ -473,11 +480,13 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 	// Do PSK or key agreement depending on extensions
 	serverPSK := PreSharedKeyExtension{HandshakeType: HandshakeTypeServerHello}
 	serverKeyShare := KeyShareExtension{HandshakeType: HandshakeTypeServerHello}
+	certWithExternPSK := CertWithExternPSKExtension{}
 
 	foundExts, err := sh.Extensions.Parse(
 		[]ExtensionBody{
 			&serverPSK,
 			&serverKeyShare,
+			&certWithExternPSK,
 		})
 	if err != nil {
 		logf(logTypeHandshake, "[ClientWaitSH] Error processing extensions [%v]", err)
@@ -486,6 +495,10 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 
 	if foundExts[ExtensionTypePreSharedKey] && (serverPSK.SelectedIdentity == 0) {
 		state.Params.UsingPSK = true
+	}
+
+	if foundExts[ExtensionTypeCertWithExternPSK] {
+		state.Params.UsingCertWithExternPSK = true
 	}
 
 	var dhSecret []byte
@@ -659,7 +672,7 @@ func (state clientStateWaitEE) Next(hr handshakeMessageReader) (HandshakeState, 
 			KeySet: makeTrafficKeys(state.cryptoParams, state.clientHandshakeTrafficSecret)})
 	}
 
-	if state.Params.UsingPSK {
+	if state.Params.UsingPSK && !state.Params.UsingCertWithExternPSK {
 		logf(logTypeHandshake, "[ClientStateWaitEE] -> [ClientStateWaitFinished]")
 		nextState := clientStateWaitFinished{
 			Params:                       state.Params,

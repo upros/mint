@@ -720,3 +720,20 @@ func (sct *ServerCertTypeExtension) Unmarshal(data []byte) (int, error) {
 
 	return 0, fmt.Errorf("tls.certificate_types: Handshake type not allowed")
 }
+
+// struct {
+// } CertWithExternPSK;
+
+type CertWithExternPSKExtension struct{}
+
+func (certepsk CertWithExternPSKExtension) Type() ExtensionType {
+	return ExtensionTypeCertWithExternPSK
+}
+
+func (certepsk CertWithExternPSKExtension) Marshal() ([]byte, error) {
+	return []byte{}, nil
+}
+
+func (certepsk *CertWithExternPSKExtension) Unmarshal(data []byte) (int, error) {
+	return 0, nil
+}

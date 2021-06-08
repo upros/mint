@@ -127,6 +127,7 @@ const (
 	ExtensionTypeTicketEarlyDataInfo ExtensionType = 46
 	ExtensionTypeClientCertType      ExtensionType = 19
 	ExtensionTypeServerCertType      ExtensionType = 20
+	ExtensionTypeCertWithExternPSK   ExtensionType = 33
 )
 
 // enum {...} NamedGroup

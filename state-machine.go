@@ -62,6 +62,7 @@ type ConnectionParameters struct {
 	UsingEarlyData         bool
 	RejectedEarlyData      bool
 	UsingClientAuth        bool
+	UsingCertWithExternPSK bool
 
 	CipherSuite CipherSuite
 	ServerName  string
