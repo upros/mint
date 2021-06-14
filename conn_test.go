@@ -179,7 +179,7 @@ var (
 	psk  PreSharedKey
 	psks *PSKMapCache
 
-	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, rawConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, certWithExternPSKConfig, resumptionConfig, ffdhConfig, x25519Config *Config
+	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, rawConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, certWithExternPSKConfig, rawWithExternPSKConfig, resumptionConfig, ffdhConfig, x25519Config *Config
 )
 
 func init() {
@@ -308,6 +308,16 @@ func init() {
 		ServerName:         serverName,
 		Certificates:       certificates,
 		PSKs:               psks,
+		CertWithExternPSK:  true,
+		InsecureSkipVerify: true,
+	}
+
+	rawWithExternPSKConfig = &Config{
+		ServerName:         serverName,
+		Certificates:       certificates,
+		PSKs:               psks,
+		AllowRawPublicKeys: true,
+		ForbidCertificates: true,
 		CertWithExternPSK:  true,
 		InsecureSkipVerify: true,
 	}
@@ -759,7 +769,7 @@ func TestClientAuthVerifyPeerRejected(t *testing.T) {
 }
 
 func TestPSKFlows(t *testing.T) {
-	for _, conf := range []*Config{pskConfig, pskECDHEConfig, pskDHEConfig, certWithExternPSKConfig} {
+	for _, conf := range []*Config{pskConfig, pskECDHEConfig, pskDHEConfig, certWithExternPSKConfig, rawWithExternPSKConfig} {
 		cConn, sConn := pipe()
 
 		client := Client(cConn, conf)

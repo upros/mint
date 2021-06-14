@@ -104,10 +104,10 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 
 	// Raw public keys
 	var cct *ClientCertTypeExtension
-	var sct *ClientCertTypeExtension
+	var sct *ServerCertTypeExtension
 	if state.Config.AllowRawPublicKeys || !state.Config.ForbidCertificates {
-		cct := &ClientCertTypeExtension{HandshakeType: HandshakeTypeClientHello}
-		sct := &ServerCertTypeExtension{HandshakeType: HandshakeTypeClientHello}
+		cct = &ClientCertTypeExtension{HandshakeType: HandshakeTypeClientHello}
+		sct = &ServerCertTypeExtension{HandshakeType: HandshakeTypeClientHello}
 
 		if state.Config.AllowRawPublicKeys {
 			cct.CertificateTypes = append(cct.CertificateTypes, CertificateTypeRawPublicKey)
@@ -118,6 +118,9 @@ func (state clientStateStart) Next(hr handshakeMessageReader) (HandshakeState, [
 			cct.CertificateTypes = append(cct.CertificateTypes, CertificateTypeX509)
 			sct.CertificateTypes = append(sct.CertificateTypes, CertificateTypeX509)
 		}
+	}
+	if state.Config.AllowRawPublicKeys || state.Config.ForbidCertificates {
+		logf(logTypeHandshake, "[ClientStateStart] AllowRawPublicKeys only")
 	}
 
 	// Construct base ClientHello
@@ -495,10 +498,12 @@ func (state clientStateWaitSH) Next(hr handshakeMessageReader) (HandshakeState, 
 
 	if foundExts[ExtensionTypePreSharedKey] && (serverPSK.SelectedIdentity == 0) {
 		state.Params.UsingPSK = true
+		logf(logTypeHandshake, "[ClientStateWaitSH] UsingPSK")
 	}
 
 	if foundExts[ExtensionTypeCertWithExternPSK] {
 		state.Params.UsingCertWithExternPSK = true
+		logf(logTypeHandshake, "[ClientStateWaitSH] Found ExtensionTypeCertWithExternPSK")
 	}
 
 	var dhSecret []byte
@@ -660,6 +665,7 @@ func (state clientStateWaitEE) Next(hr handshakeMessageReader) (HandshakeState, 
 		foundClient := serverClientCertType.CertificateTypes[0] == CertificateTypeRawPublicKey
 		foundServer := serverServerCertType.CertificateTypes[0] == CertificateTypeRawPublicKey
 		state.Params.UsingRawPublicKeys = foundClient && foundServer
+		logf(logTypeHandshake, "[ClientStateWaitEE] UsingRawPublicKeys")
 	}
 
 	state.handshakeHash.Write(hm.Marshal())
@@ -673,6 +679,7 @@ func (state clientStateWaitEE) Next(hr handshakeMessageReader) (HandshakeState, 
 	}
 
 	if state.Params.UsingPSK && !state.Params.UsingCertWithExternPSK {
+		logf(logTypeHandshake, "[ClientStateWaitEE] UsingPSK, not UsingCertWithExternPSK")
 		logf(logTypeHandshake, "[ClientStateWaitEE] -> [ClientStateWaitFinished]")
 		nextState := clientStateWaitFinished{
 			Params:                       state.Params,
@@ -890,6 +897,11 @@ func (state clientStateWaitCV) Next(hr handshakeMessageReader) (HandshakeState, 
 		serverPublicKey = eeCert.PublicKey
 	} else {
 		serverPublicKey, err = unmarshalSigningKey(certs[0])
+		if state.Params.UsingPSK {
+			logf(logTypeHandshake, "[ClientStateWaitCV] UsingRawPublicKeys and PSK")
+		} else {
+			logf(logTypeHandshake, "[ClientStateWaitCV] UsingRawPublicKeys")
+		}
 		if err != nil {
 			logf(logTypeHandshake, "[ClientStateWaitCV] Unable to parse raw public key: %v", err)
 		}
