@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -176,10 +177,12 @@ var (
 	certificates, clientCertificates []*Certificate
 	clientName, serverName           string
 
-	psk  PreSharedKey
-	psks *PSKMapCache
+	psk      PreSharedKey
+	hkdfPsk  PreSharedKey
+	psks     *PSKMapCache
+	hkdfPsks *PSKMapCache
 
-	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, rawConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, certWithExternPSKConfig, rawWithExternPSKConfig, resumptionConfig, ffdhConfig, x25519Config *Config
+	basicConfig, dtlsConfig, nbConfig, nbDTLSConfig, hrrConfig, alpnConfig, rawConfig, pskConfig, pskDTLSConfig, pskECDHEConfig, pskDHEConfig, certWithExternPSKConfig, rawWithExternPSKConfig, rawWithExternPSKFromHKDFConfig, resumptionConfig, ffdhConfig, x25519Config *Config
 )
 
 func init() {
@@ -197,11 +200,25 @@ func init() {
 		panic(err)
 	}
 
+	derPublicKey, err := marshalSigningKey(clientKey.Public())
+	if err != nil {
+		panic(err)
+	}
+
+	epskid := computeEpskid(derPublicKey)
+
 	psk = PreSharedKey{
 		CipherSuite:  TLS_AES_128_GCM_SHA256,
 		IsResumption: false,
 		Identity:     []byte{0, 1, 2, 3},
 		Key:          []byte{4, 5, 6, 7},
+	}
+
+	hkdfPsk = PreSharedKey{
+		CipherSuite:  TLS_AES_128_GCM_SHA256,
+		IsResumption: false,
+		Identity:     epskid,
+		Key:          derPublicKey,
 	}
 	certificates = []*Certificate{
 		{
@@ -218,6 +235,11 @@ func init() {
 	psks = &PSKMapCache{
 		serverName: psk,
 		"00010203": psk,
+	}
+
+	hkdfPsks = &PSKMapCache{
+		serverName:                 hkdfPsk,
+		hex.EncodeToString(epskid): hkdfPsk,
 	}
 
 	basicConfig = &Config{
@@ -320,6 +342,17 @@ func init() {
 		ForbidCertificates: true,
 		CertWithExternPSK:  true,
 		InsecureSkipVerify: true,
+	}
+
+	rawWithExternPSKFromHKDFConfig = &Config{
+		ServerName:         serverName,
+		Certificates:       certificates,
+		PSKs:               hkdfPsks,
+		AllowRawPublicKeys: true,
+		ForbidCertificates: true,
+		CertWithExternPSK:  true,
+		InsecureSkipVerify: true,
+		RequireClientAuth:  true,
 	}
 
 	resumptionConfig = &Config{
@@ -769,7 +802,33 @@ func TestClientAuthVerifyPeerRejected(t *testing.T) {
 }
 
 func TestPSKFlows(t *testing.T) {
-	for _, conf := range []*Config{pskConfig, pskECDHEConfig, pskDHEConfig, certWithExternPSKConfig, rawWithExternPSKConfig} {
+	for _, conf := range []*Config{pskConfig, pskECDHEConfig, pskDHEConfig} {
+		cConn, sConn := pipe()
+
+		client := Client(cConn, conf)
+		server := Server(sConn, conf)
+
+		var clientAlert, serverAlert Alert
+
+		done := make(chan bool)
+		go func(t *testing.T) {
+			serverAlert = server.Handshake()
+			assertEquals(t, serverAlert, AlertNoAlert)
+			done <- true
+		}(t)
+
+		clientAlert = client.Handshake()
+		assertEquals(t, clientAlert, AlertNoAlert)
+
+		<-done
+
+		checkConsistency(t, client, server)
+
+		assertTrue(t, client.state.Params.UsingPSK, "Session did not use the provided PSK")
+	}
+}
+func TestRFC8773Flows(t *testing.T) {
+	for _, conf := range []*Config{certWithExternPSKConfig, rawWithExternPSKConfig, rawWithExternPSKFromHKDFConfig} {
 		cConn, sConn := pipe()
 
 		client := Client(cConn, conf)

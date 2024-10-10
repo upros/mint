@@ -2,6 +2,8 @@ package mint
 
 import (
 	"bytes"
+	"crypto"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"reflect"
@@ -16,6 +18,22 @@ func unhex(h string) []byte {
 		panic(err)
 	}
 	return b
+}
+
+func computeEpskid(der []byte) []byte {
+	b64 := base64.StdEncoding.EncodeToString(der)
+	logf(logTypeVerbose, "Base64 DER of SubjectPublicKeyInfo %s", b64)
+
+	extract := HkdfExtract(crypto.SHA256, nil, der)
+	b64 = base64.StdEncoding.EncodeToString(extract)
+	logf(logTypeVerbose, "Base64 of HKDF-Extract %s", b64)
+
+	epskid := HkdfExpand(crypto.SHA256, extract, []byte("tls13-bspsk-identity"), 32)
+	b64 = base64.StdEncoding.EncodeToString(epskid)
+	logf(logTypeVerbose, "Base64 of HKDF-Expand (epskid) %s", b64)
+
+	return epskid
+
 }
 
 func assertTrue(t *testing.T, test bool, msg string) {
